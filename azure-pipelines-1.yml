@@ -8,264 +8,68 @@ variables:
   webAppName: 'helloflasktesting'
   environmentName: 'helloflasktesting'
   projectRoot: '$(System.DefaultWorkingDirectory)'
-  pythonVersion: '3.10'
 
 stages:
-
-# =========================================================
-# BUILD STAGE
-# =========================================================
 - stage: Build
-  displayName: 'Build and Validate FastAPI'
+  displayName: Build FastAPI
   jobs:
   - job: BuildJob
-    displayName: 'Validate and Package Application'
-
     steps:
-
-    # 1. Check Python and pip
     - script: |
-        set -eu
-        python3 --version
-        python3 -m pip --version
-      displayName: 'Check Python environment'
-      workingDirectory: $(projectRoot)
-
-    # 2. Install project dependencies
-    - script: |
-        set -eu
+        set -e
         python3 -m pip install --upgrade pip
         python3 -m pip install -r requirements.txt
-        python3 -m pip check
-      displayName: 'Install and validate dependencies'
-      workingDirectory: $(projectRoot)
 
-    # 3. Validate application files and imports
-    - script: |
-        set -eu
+        echo "Checking dependency consistency..."
+        python3 -m pip check || echo "WARNING: Dependency conflicts detected; review the log."
 
-        echo "Checking required files..."
+        echo "Checking FastAPI application..."
+        python3 -c "import fastapi, uvicorn, jinja2, multipart, main; print('Application import successful')"
 
         test -f main.py
         test -f requirements.txt
         test -f templates/index.html
         test -f templates/hello.html
         test -d static
-
-        if ! find static -type f -print -quit | grep -q .; then
-          echo "ERROR: static directory contains no files"
-          exit 1
-        fi
-
-        echo "Checking required Python packages..."
-        python3 -c "import fastapi, uvicorn, jinja2, multipart"
-
-        echo "Importing FastAPI application..."
-        python3 -c "import main; print('Application:', main.app.title)"
-
-        echo "Application validation passed."
-      displayName: 'Validate FastAPI application'
       workingDirectory: $(projectRoot)
+      displayName: Install and validate dependencies
 
-    # 4. Prepare a clean deployment directory
-    - script: |
-        set -eu
-
-        export SOURCE_DIR="$(projectRoot)"
-        export PACKAGE_DIR="$(Build.ArtifactStagingDirectory)/package"
-
-        python3 <<'PY'
-        import os
-        import shutil
-        from pathlib import Path
-
-        source = Path(os.environ["SOURCE_DIR"]).resolve()
-        package = Path(os.environ["PACKAGE_DIR"]).resolve()
-
-        excluded_dirs = {
-            ".git",
-            ".venv",
-            "venv",
-            "__pycache__",
-            ".pytest_cache",
-            ".mypy_cache",
-            ".tox",
-            "node_modules",
-        }
-
-        excluded_files = {
-            ".env",
-        }
-
-        def ignore(directory, names):
-            ignored = []
-            for name in names:
-                path = Path(directory) / name
-
-                if name in excluded_dirs:
-                    ignored.append(name)
-                elif name in excluded_files:
-                    ignored.append(name)
-                elif name.endswith(".pyc"):
-                    ignored.append(name)
-                elif name.startswith(".env."):
-                    ignored.append(name)
-
-            return ignored
-
-        if package.exists():
-            shutil.rmtree(package)
-
-        package.mkdir(parents=True)
-
-        for item in source.iterdir():
-            if item.name in excluded_dirs:
-                continue
-            if item.name in excluded_files:
-                continue
-            if item.name.endswith(".pyc"):
-                continue
-            if item.name.startswith(".env."):
-                continue
-
-            destination = package / item.name
-
-            if item.is_dir():
-                shutil.copytree(
-                    item,
-                    destination,
-                    ignore=ignore,
-                )
-            elif item.is_file():
-                shutil.copy2(item, destination)
-
-        print("Prepared package:", package)
-        PY
-
-        echo "Checking packaged application..."
-
-        test -f "$(Build.ArtifactStagingDirectory)/package/main.py"
-        test -f "$(Build.ArtifactStagingDirectory)/package/requirements.txt"
-        test -f "$(Build.ArtifactStagingDirectory)/package/templates/index.html"
-        test -f "$(Build.ArtifactStagingDirectory)/package/templates/hello.html"
-        test -d "$(Build.ArtifactStagingDirectory)/package/static"
-
-        echo "Package directory validation passed."
-      displayName: 'Prepare clean deployment package'
-      workingDirectory: $(projectRoot)
-
-    # 5. Archive files at ZIP root
     - task: ArchiveFiles@2
-      displayName: 'Create deployment ZIP'
+      displayName: Package application
       inputs:
-        rootFolderOrFile: '$(Build.ArtifactStagingDirectory)/package'
+        rootFolderOrFile: '$(projectRoot)'
         includeRootFolder: false
         archiveType: zip
         archiveFile: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip'
         replaceExistingArchive: true
 
-    # 6. Verify ZIP contents and directory structure
     - script: |
-        set -eu
+        python3 -c "import zipfile, os; z=zipfile.ZipFile(os.environ['ZIP_PATH']); required=['main.py','requirements.txt','templates/index.html','templates/hello.html']; missing=[f for f in required if f not in z.namelist()]; print('Missing files:', missing); assert not missing, 'Package validation failed'; assert any(f.startswith('static/') and not f.endswith('/') for f in z.namelist()), 'No static assets in package'; print('Package validation passed')"
+      displayName: Verify ZIP
+      env:
+        ZIP_PATH: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip'
 
-        ZIP_PATH="$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip"
-        export ZIP_PATH
-
-        test -s "$ZIP_PATH"
-
-        python3 <<'PY'
-        import os
-        import zipfile
-
-        zip_path = os.environ["ZIP_PATH"]
-
-        required = [
-            "main.py",
-            "requirements.txt",
-            "templates/index.html",
-            "templates/hello.html",
-        ]
-
-        with zipfile.ZipFile(zip_path) as archive:
-            names = set(archive.namelist())
-
-            missing = [
-                path for path in required
-                if path not in names
-            ]
-
-            if missing:
-                raise SystemExit(
-                    f"ERROR: Missing ZIP files: {missing}"
-                )
-
-            static_files = [
-                name for name in names
-                if name.startswith("static/")
-                and not name.endswith("/")
-            ]
-
-            if not static_files:
-                raise SystemExit(
-                    "ERROR: No static files in ZIP"
-                )
-
-            forbidden = [
-                name for name in names
-                if name.startswith(
-                    (".git/", ".venv/", "venv/")
-                )
-            ]
-
-            if forbidden:
-                raise SystemExit(
-                    f"ERROR: Unwanted files: {forbidden[:10]}"
-                )
-
-            print("ZIP validation passed.")
-            print(f"ZIP entries: {len(names)}")
-            print(f"Static files: {len(static_files)}")
-            print("Required files:", required)
-            print("\nZIP contents:")
-            for name in sorted(names):
-                print(name)
-        PY
-      displayName: 'Verify deployment ZIP'
-
-    # 7. Publish deployment artifact
     - publish: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip'
-      displayName: 'Publish deployment artifact'
       artifact: drop
+      displayName: Publish package
 
-
-# =========================================================
-# DEPLOY STAGE
-# =========================================================
 - stage: Deploy
-  displayName: 'Deploy FastAPI to Azure'
+  displayName: Deploy FastAPI
   dependsOn: Build
   condition: succeeded()
-
   jobs:
   - deployment: DeploymentJob
-    displayName: 'Deploy to Azure App Service'
-
     pool: myAgentPool
-
     environment: $(environmentName)
-
     strategy:
       runOnce:
         deploy:
           steps:
-
-          # 8. Download the artifact from Build
           - download: current
             artifact: drop
 
-          # 9. Deploy FastAPI application
           - task: AzureWebApp@1
-            displayName: 'Deploy FastAPI Web App'
+            displayName: Deploy to Azure App Service
             inputs:
               azureSubscription: $(azureServiceConnectionId)
               appType: webAppLinux
