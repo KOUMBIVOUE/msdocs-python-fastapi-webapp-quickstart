@@ -65,20 +65,20 @@ stages:
       runOnce:
         deploy:
           steps:
-#          - task: AzureWebApp@1
-#            displayName: 'Deploy Azure Web App : helloflasktesting'
-#            inputs:
-#              azureSubscription: $(azureServiceConnectionId)
-#              appName: $(webAppName)
-#              package: $(Pipeline.Workspace)/drop/$(Build.BuildId).zip
-#              appType: webApp
           - task: AzureWebApp@1
             displayName: 'Deploy Azure Web App : helloflasktesting'
             inputs:
-                azureSubscription: $(azureServiceConnectionId)
-                appName: $(webAppName)
-                appType: 'webAppLinux'
-                package: '$(System.DefaultWorkingDirectory)/**/*.zip'
-                runtimeStack: 'PYTHON|3.10'
-                startUpCommand: 'uvicorn main:app --reload'
-                appSettings: '-Port 5000'
+              azureSubscription: $(azureServiceConnectionId)
+              appName: $(webAppName)
+              package: $(Pipeline.Workspace)/drop/$(Build.BuildId).zip
+              runtimeStack: 'PYTHON|3.10'
+              startUpCommand: 'uvicorn main:app --reload'
+              appType: webApp
+#          - task: AzureWebApp@1
+#            displayName: 'Deploy Azure Web App : helloflasktesting'
+#            inputs:
+#                azureSubscription: $(azureServiceConnectionId)
+#                appName: $(webAppName)
+#                appType: 'webAppLinux'
+#                package: '$(System.DefaultWorkingDirectory)/**/*.zip'                
+#                appSettings: '-Port 5000'
